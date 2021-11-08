@@ -2,49 +2,26 @@
 
 
 
-## Folder structure
-In the directory `code` you can find 2 files. 
-File `networks.py` contains encoding of fully connected neural network architectures as PyTorch classes.
-The architectures extend `nn.Module` object and consist of standard PyTorch layers and a new SPU activation function. Please note that first layer of each network performs normalization of the input image.
-File `verifier.py` contains a template of verifier. Loading of the stored networks and test cases is already implemented in `main` function. If you decide to modify `main` function, please ensure that parsing of the test cases works correctly. Your task is to modify `analyze` function by building upon DeepPoly convex relaxation. Note that provided verifier template is guaranteed to achieve **0** points (by always outputting `not verified`).
+## Descrition
 
-In folder `mnist_nets` you can find 10 neural networks (total of 5 architectures and 2 different models per architecture). These networks are loaded using PyTorch in `verifier.py`.
-In folder `test_cases` you can find 10 subfolders. Each subfolder is associated with one of the networks, using the same name. In a subfolder corresponding to a network, you can find 2 test cases for this network. 
-As explained in the lecture, these test cases **are not** part of the set of test cases which we will use for the final evaluation. 
+The goal of the proejct is to implement a verifier of a fully connected neural network. According to the particular specification, our network only contains 4 type of layers: `nn.Linear`(affine layers), `nn.Flatten`(tensor stacking), `Normalization` (normalization layer), and `SPU` (activation layer). Therefore, we need to implement corresponding DeepPoly transformers that allows some convex relaxations to pass through. In addition, we also need an input and output layer that transforms the original input into DeepPoly or the DeepPoly output into verification output. 
 
-## Setup instructions
+In the initial code, we have defined a class called `DeepPoly` which directly mirrors the structure of our target network. The class `DeepPoly` contains the following 6 different layers (all using `nn.Module`):
 
-We recommend you to install Python virtual environment to ensure dependencies are same as the ones we will use for evaluation.
-To evaluate your solution, we are going to use Python 3.7.
-You can create virtual environment and install the dependencies using the following commands:
+1. `DeepPolyInputLayer`
+This layer takes an image and a bound $`\epsilon`$ as an input. It tranforms the image into its DeepPoly representation of the $`\epsilon`$-ball in $`L^\infty$` space.
 
-```bash
-$ virtualenv venv --python=python3.7
-$ source venv/bin/activate
-$ pip install -r requirements.txt
-```
+2. `DeepPolyAffineLayer`
+This layer performs affine transformation on the convex relaxation. The specific implementation is the same as that seen in class. More specific in terms of matrix multiplication, its new transformed upper-bound can be specified as the positive entries of weight matrix `w` multiplied with upper-bound plus negative entries multiplied with lower-bound. The lower bound can be defined vice versa. 
 
-## Running the verifier
+3. `DeepPolyNormalizer`
+The normalizer is essentially normalizing (scaling and shifting) the input data. Hence, we only need to perform the exact same scaling and shifting on our bounds.
 
-We will run your verifier from `code` directory using the command:
+4. `DeepPolyOutputLayer`
+Given a DeepPoly represenatation as the output of the network, we use this final layer to see if we can still get the same output under perturbation. The essence is to check if the output-class has a lower-bound that is higher than all other upper-bounds.
 
-```bash
-$ python verifier.py --net {net} --spec ../test_cases/{net}/img{test_idx}_{eps}.txt
-```
+5. `DeepPolyFalttenLayer`
+All this method does is to simply transform the shape of the input. Relatively easily we can perform the same operation on the bounds.
 
-In this command, `{net}` is equal to one of the following values (each representing one of the networks we want to verify): `net0_fc1, net1_fc1, net0_fc2, net1_fc2, net0_fc3, net1_fc3, net0_fc4, net1_fc4, net0_fc5, net1_fc5`.
-`test_idx` is an integer representing index of the test case, while `eps` is perturbation that verifier should certify in this test case.
-
-To test your verifier, you can run for example:
-
-```bash
-$ python verifier.py --net net0_fc1 --spec ../test_cases/net0_fc1/example_img0_0.01800.txt
-```
-
-To evaluate the verifier on all networks and sample test cases, we provide the evaluation script.
-You can run this script using the following commands:
-
-```bash
-chmod +x evaluate
-./evaluate
-```
+6. `DeepPolySPU`
+This layer performs transformation of DeepPoly through SPU activation. The specific formalation is calculated and is proved to have the minimal area among all DeepPolies (under the constraint that they are tangent lines or secant lines). 
