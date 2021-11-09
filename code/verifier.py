@@ -1,6 +1,8 @@
 import argparse
 import torch
+from code.networks import Normalization
 from networks import FullyConnected
+from torch import nn
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
@@ -17,34 +19,89 @@ class DeepPoly():
         prev_layer = None
         for layer in self.net.layers:
             if isinstance(layer, torch.nn.Linear):
-                prev_layer = DeepPolyAffineLayer(weights=layer._parameters['weight'].detach(), 
-                bias=layer._parameters['bias'].detach(), prev_layer=prev_layer, back_subs=self.back_subs)
+                prev_layer = DeepPolyAffineLayer(weights=layer._parameters['weight'].detach(),\
+                            bias=layer._parameters['bias'].detach(), prev_layer=prev_layer, back_subs=self.back_subs)
                 self.layers.append(prev_layer)
+            elif isinstance(layer, torch.nn.Flatten):
+                prev_layer = DeepPolyFlattenLayer(prev_layer=prev_layer)
+                self.layers.append(prev_layer)
+            elif isinstance(layer, Normalization):
+                prev_layer = DeepPolyNormalizeLayer(prev_layer=prev_layer)
+                self.layers.append(prev_layer)
+            elif isinstance(SPU):
+                prev_layer = DeepPolySPULayer(prev_layer=prev_layer, back_subs=self.back_subs)
+                self.layers.append(prev_layer)
+            else:
+                raise TypeError('Layer type unknown!')
+
         self.layers.append(DeepPolyOutputLayer(true_label=self.true_label, prev_layer=prev_layer, back_subs=self.back_subs))
         
         self.transformer = nn.Sequential(*self.layers)
 
     def verify(self):
-        output_bounds = self.transformer(self.inputs)
-        pass
-        return  
+        return self.transformer(self.inputs)
+         
 
     
 class DeepPolyInputLayer(nn.Module):
     def __init__(self, eps):
-        pass
+        super(DeepPolyInputLayer, self).__init__()
+        self.eps = eps
 
-    def forward(self, input):
+    def forward(self, input:torch.Tensor):
+        lower = torch.clamp(input - self.eps, 0., 1.)
+        upper = torch.clamp(input + self.eps, 0., 1.)
+        self.bounds = torch.stack((lower, upper), 0)
+        return self.bounds
+
+
+class DeepPolyFlattenLayer(nn.Module):
+    def __init__(self, prev_layer=None):
+        super(DeepPolyFlattenLayer, self).__init__()
+        self.prev_layer = prev_layer
+
+    def forward(self, bounds):
+        return torch.stack([bounds[0].flatten(), bounds[1].flatten()], 0)
+
+    def back_substitution(self, num_steps, params=None):
         pass
+        
+
+
+class DeepPolyNormalizeLayer(nn.Module):
+    def __init__(self, prev_layer = None):
+        super(DeepPolyNormalizeLayer, self).__init__()
+        self.prev_layer = prev_layer
+        self.mean = torch.FloatTensor([0.1307])
+        self.variance = torch.FloatTensor([0.3081])
+
+    def forward(self, bounds):
+        self.bounds = torch.div(bounds - self.mean, self.variance)
+        return self.bounds
+
 
 
 class DeepPolyAffineLayer(nn.Module):
-    def __init__(self, weights, bias=None, prev_layer=None, back_subs=0):
-        pass
+    def __init__(self, weights, bias:Bool=None, prev_layer=None, back_subs:int=0):
+        self.weights = weights
+        self.bias = bias
+        self.prev_layer = prev_layer
+        self.back_subs = back_subs
+
+        self.weight_positive = torch.clip(self.weights, min = 0.)
+        self.weight_negative = torch.clip(self.weights, max = 0.)
+
     def forward(self, bounds):
-        pass
+        upper = torch.matmul(self.weight_positive, bounds[1, :]) + torch.matmul(self.weight_negative, bounds[0, :])
+        lower = torch.matmul(self.weight_positive, bounds[0, :]) + torch.matmul(self.weight_negative, bounds[1, :])
+        self.bounds = torch.stack((lower, upper), 0)
+        if self.bias is not None:
+            self.bounds += self.bias.reshape(-1, 1)
+        if self.back_subs > 0:
+            self.back_substitution(self.back_subs)
+
     def back_substitution(self, num_steps):
-        pass
+        pass 
 
 
 class DeepPolySPULayer(nn.Module):
@@ -55,13 +112,6 @@ class DeepPolySPULayer(nn.Module):
     def back_substitution(self, num_steps):
         pass
 
-
-
-class DeepPolyNormalizeLayer(nn.Module):
-    def __init__(self, prev_layer = None):
-        pass
-    def forward(self, bounds):
-        pass
 
 
 
