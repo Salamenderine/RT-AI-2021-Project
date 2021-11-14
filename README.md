@@ -25,3 +25,16 @@ All this method does is to simply transform the shape of the input. Relatively e
 
 6. `DeepPolySPU`
 This layer performs transformation of DeepPoly through SPU activation. The specific formalation is calculated and is proved to have the minimal area among all DeepPolies (under the constraint that they are tangent lines or secant lines). 
+
+
+## Task Division
+
+The task is naturally separated into many parts according to different transformers and their corresponding functions. We are dividing the tasks for each group member as follows:
+
+1. `DeepPolyFlattenLayer`: The model requires forward and a back_substitution method. In the code of last year, there are also many property methods such as `mu`, `beta`, `lambda`, and `bounds`. we are going to find out where these properties are required or if they are indeed necessary. This part goes to Haobo.
+
+2. `DeepPolyAffineLayer`: This layer requires a backward propagation function. The forward method is simple and is already implemented. The only task for this method is to read the code for last year and implement it in our own way. This part goes to Xindi.
+
+3. `DeepPolyOutputLayer`: This layer takes as input a DeepPoly and see if the network is verified or not. If the foward method cannot successfully verify, we will need to call the abck_substitution method and use tighter bound estimations. This part goes to Zhaochong.
+
+4. `DeepPolySPULayer`: This is the part where our function differes much from the original code of ReLU. We will be first digging into the ReLU call and see what is the logic of implementation. Then, we will modify the code to make it according to our new upper and lower bound fucntions.
