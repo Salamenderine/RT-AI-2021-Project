@@ -117,17 +117,66 @@ class DeepPolySPULayer(nn.Module):
 
 class DeepPolyOutputLayer(nn.Module):
     def __init__(self, true_label, prev_layer=None, back_subs=0):
-        pass
-    def forward(self, bounds):
-        pass
-    def back_substitution(self, num_steps):
-        pass
-        
+        super(DeepPolyOutputLayer, self).__init__()
+        self.last = prev_layer
+        self.true_label = true_label
+        self.back_sub_steps = back_subs
+        self.n_labels = self.last.weights.shape[0]
+        self._set_weights()
+        self.W1_plus = torch.clamp(self.weights1, min=0)
+        self.W1_minus = torch.clamp(self.weights1, max=0)
+        self.W2_plus = torch.clamp(self.weights1, min=0)
+        self.W2_minus = torch.clamp(self.weights1, max=0)
 
+
+    def forward(self, bounds):
+        upper1 = torch.matmul(self.W1_plus, bounds[:,1]) + torch.matmul(self.W1_minus, bounds[:,0])
+        lower1 = torch.matmul(self.W1_plus, bounds[:,0]) + torch.matmul(self.W1_minus, bounds[:,1])
+        self.bounds1 = torch.stack([lower1, upper1], 1)
+        if self.back_sub_steps > 0:
+            self.back_sub(self.back_sub_steps)
+        return self.bounds1
+
+
+    def _back_sub(self, max_steps):
+        Ml1, Mu1  = self.weights1, self.weights1
+
+        if max_steps > 0 and self.last.last is not None:
+            Ml1new = torch.matmul(Ml1, self.last.weights) 
+            Mu1new = torch.matmul(Mu1, self.last.weights) 
+            bl1new = torch.matmul(Ml1, self.last.bias)
+            bu1new = torch.matmul(Mu1, self.last.bias)
+            return self.last._back_sub(max_steps-1, params=(Ml1new, Mu1new, bl1new, bu1new))
+        else:
+            lower1 = torch.matmul(torch.clamp(Ml1, min=0), self.last.bounds[:, 0]) + torch.matmul(torch.clamp(Ml1, max=0), self.last.bounds[:, 1]) 
+            upper1 = torch.matmul(torch.clamp(Mu1, min=0), self.last.bounds[:, 1]) + torch.matmul(torch.clamp(Mu1, max=0), self.last.bounds[:, 0]) 
+            return torch.stack([lower1, upper1], 1)
+
+
+    def back_substitution(self, num_steps):
+        new_bounds = self._back_sub(num_steps)
+        indl = new_bounds[:,0] > self.bounds1[:,0]
+        indu = new_bounds[:,1] < self.bounds1[:,1]
+        self.bounds1[indl, 0] = new_bounds[indl,0]
+        self.bounds1[indu, 1] = new_bounds[indu,1]
+
+        
+    def _set_weights(self):
+        self.weights1=torch.zeros((self.n_labels-1,self.n_labels))
+        self.weights1[:,self.true_label]-=1
+        self.weights1[:self.true_label, :self.true_label] += torch.eye(self.true_label)
+        self.weights1[self.true_label:, self.true_label + 1:] += torch.eye(self.n_labels - self.true_label - 1)
 
 
 def analyze(net, inputs, eps, true_label):
-    return 0
+    net.eval()
+    d = DeepPoly(net, eps, inputs, true_label, back_sub_steps=20, only_first=False)
+    b1 = d.verify()
+    # b1 upper bound represents y_false_upper - y_true_low, which should be <=0
+    if sum(b1[:,1]>0)==0:
+        return True
+    else:
+        return False
 
 
 def main():
