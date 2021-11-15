@@ -118,7 +118,7 @@ class DeepPolyAffineLayer(nn.Module):
         lower = torch.matmul(self.weight_positive, bounds[0, :]) + torch.matmul(self.weight_negative, bounds[1, :])
         self.bounds = torch.stack((lower, upper), 0)
         if self.bias is not None:
-            self.bounds += self.bias.reshape(-1, 1)
+            self.bounds += self.bias.reshape(1, -1)
         if self.back_subs > 0:
             self.back_substitution(self.back_subs)
 
