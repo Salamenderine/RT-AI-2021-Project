@@ -255,7 +255,7 @@ class DeepPolySPULayer(nn.Module):
 
         else:
             lower = torch.matmul(torch.clamp(lower_slope, min=0), self.prev_layer.bounds[0]) + torch.matmul(torch.clamp(lower_slope, max=0), self.prev_layer.bounds[1]) + lower_intercept
-            upper = torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[0]) + upper_intercept
+            upper = torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(upper_slope, max=0), self.prev_layer.bounds[0]) + upper_intercept
             return torch.stack([lower, upper], 0)
 
 
