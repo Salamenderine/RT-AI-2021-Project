@@ -4,9 +4,12 @@ import torch
 from networks import FullyConnected
 from networks import *
 from torch import nn
+import logging, sys
+
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 class DeepPoly():
     def __init__(self, net, inputs, eps, true_label, back_subs=0):
@@ -52,7 +55,7 @@ class DeepPolyInputLayer(nn.Module):
     def forward(self, input:torch.Tensor):
         lower = torch.clamp(input - self.eps, 0., 1.)
         upper = torch.clamp(input + self.eps, 0., 1.)
-        self.bounds = torch.stack((lower, upper), 0)
+        self.bounds = torch.stack([lower, upper], 0)
         return self.bounds
 
 
@@ -71,8 +74,12 @@ class DeepPolyFlattenLayer(nn.Module):
     
     '''These codes are necessary as a property here to get consistency of function calls in backpropagation.'''
     @property
-    def intercept(self):
-        return self.prev_layer.intercept.flatten()
+    def lower_intercept(self):
+        return self.prev_layer.lower_intercept.flatten()
+
+    @property
+    def upper_intercept(self):
+        return self.prev_layer.upper_intercept.flatten()
 
     @property
     def lower_slope(self):
@@ -116,7 +123,7 @@ class DeepPolyAffineLayer(nn.Module):
     def forward(self, bounds):
         upper = torch.matmul(self.weight_positive, bounds[1, :]) + torch.matmul(self.weight_negative, bounds[0, :])
         lower = torch.matmul(self.weight_positive, bounds[0, :]) + torch.matmul(self.weight_negative, bounds[1, :])
-        self.bounds = torch.stack((lower, upper), 0)
+        self.bounds = torch.stack([lower, upper], 0)
         if self.bias is not None:
             self.bounds += self.bias.reshape(1, -1)
         if self.back_subs > 0:
@@ -124,6 +131,7 @@ class DeepPolyAffineLayer(nn.Module):
         return self.bounds
 
     def back_substitution(self, num_steps):
+        logging.debug("Now in Affine back_substitution")
         new_bounds = self._back_sub(num_steps)
         idx_lower = new_bounds[0] > self.bounds[0]
         idx_upper = new_bounds[1] < self.bounds[1]
@@ -131,7 +139,12 @@ class DeepPolyAffineLayer(nn.Module):
         self.bounds[1, idx_upper] = new_bounds[1, idx_upper]
         
     def _back_sub(self, num_steps, params = None):
-        lower_slope, upper_slope, lower_intercept, upper_intercept = self.weights, self.weights, self.bias, self.bias if params is None else params
+        logging.debug("Now in Affine _back_sub")
+        if params is None:
+            lower_slope, upper_slope, lower_intercept, upper_intercept = self.weights, self.weights, self.bias, self.bias
+        else:
+            lower_slope, upper_slope, lower_intercept, upper_intercept = params
+        # lower_slope, upper_slope, lower_intercept, upper_intercept = self.weights, self.weights, self.bias, self.bias if params is None else params
         if num_steps > 0 and self.prev_layer.prev_layer.prev_layer is not None:
             new_lower_slope = torch.clamp(lower_slope, min = 0) * self.prev_layer.lower_slope + torch.clamp(lower_slope, max = 0) * self.prev_layer.upper_slope
             new_upper_slope = torch.clamp(upper_slope, min = 0) * self.prev_layer.upper_slope + torch.clamp(upper_slope, max = 0) * self.prev_layer.lower_slope
@@ -139,7 +152,6 @@ class DeepPolyAffineLayer(nn.Module):
                  torch.matmul(torch.clamp(lower_slope, min = 0), self.prev_layer.lower_intercept)
             new_upper_intercept = upper_intercept + torch.matmul(torch.clamp(upper_slope, max = 0), self.prev_layer.lower_intercept) +\
                  torch.matmul(torch.clamp(upper_slope, min = 0), self.prev_layer.upper_intercept)
-
             return self.prev_layer._back_sub(num_steps - 1, params = (new_lower_slope, new_upper_slope, new_lower_intercept, new_upper_intercept))
 
         else:
@@ -224,12 +236,13 @@ class DeepPolySPULayer(nn.Module):
         self.upper_slope[idx4] = torch.div(-exp_mid, (1 + exp_mid)**2)
         self.lower_slope[idx4] = torch.div(-torch.div(exp_u, 1+ exp_u) + torch.div(exp_l, 1+exp_l), bounds[1, idx4] - bounds[0, idx4])
 
-        self.upper_intercept[idx4] = - self.upper_slope[idx4] * mid + torch.div(exp_mid, 1 + exp_mid)
+        self.upper_intercept[idx4] = - self.upper_slope[idx4] * mid - torch.div(exp_mid, 1 + exp_mid)
         self.lower_intercept[idx4] = - self.lower_slope[idx4] * bounds[0, idx4] - torch.div(exp_l, 1+exp_l)
 
         self.bounds[1, idx4] = self.upper_slope[idx4] * (bounds[0, idx4] - bounds[1, idx4]) / 2 + torch.div(exp_mid, 1+exp_mid)
         self.bounds[0, idx4] = - torch.div(exp_u, 1 + exp_u)
 
+        logging.debug("Now in SPU forward")
         if self.back_subs > 0:
             self.back_substitution(self.back_subs)
         
@@ -237,31 +250,30 @@ class DeepPolySPULayer(nn.Module):
 
 
     def _back_sub(self, num_steps, params = None):
+        logging.debug("Now in SPU _back_sub")
         if params is None:
             lower_slope = torch.diag(self.lower_slope)
             upper_slope = torch.diag(self.upper_slope)
-            lower_intercept = torch.diag(self.lower_intercept)
-            upper_intercept = torch.diag(self.upper_intercept)
+            lower_intercept = self.lower_intercept
+            upper_intercept = self.upper_intercept
         else:
             lower_slope, upper_slope, lower_intercept, upper_intercept = params
-        
+
         if num_steps > 0 and self.prev_layer.prev_layer is not None:
             new_lower_slope = torch.matmul(lower_slope, self.prev_layer.weights)
             new_upper_slope = torch.matmul(upper_slope, self.prev_layer.weights)
             new_lower_intercept = lower_intercept + torch.matmul(lower_slope, self.prev_layer.bias)
             new_upper_intercept = upper_intercept + torch.matmul(upper_slope, self.prev_layer.bias)
-            # return self.prev_layer.back_substitution(num_steps - 1, params = (new_lower_slope, new_upper_slope, new_lower_intercept, new_upper_intercept))
             return self.prev_layer._back_sub(num_steps - 1, params = (new_lower_slope, new_upper_slope, new_lower_intercept, new_upper_intercept))
 
         else:
             lower = torch.matmul(torch.clamp(lower_slope, min=0), self.prev_layer.bounds[0]) + torch.matmul(torch.clamp(lower_slope, max=0), self.prev_layer.bounds[1]) + lower_intercept
-            upper = torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[0]) + upper_intercept
+            upper = torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(upper_slope, max=0), self.prev_layer.bounds[0]) + upper_intercept
             return torch.stack([lower, upper], 0)
 
 
     def back_substitution(self, num_steps):
         new_bounds = self._back_sub(num_steps).reshape(self.bounds.shape)
-
         idx_lower = new_bounds[0] > self.bounds[0]
         idx_upper = new_bounds[1] < self.bounds[1]
         self.bounds[0, idx_lower] = new_bounds[0, idx_lower]
