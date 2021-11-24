@@ -104,6 +104,7 @@ class DeepPolyAffineLayer(nn.Module):
         pass 
 
 
+
 class DeepPolySPULayer(nn.Module):
     def __init__(self, prev_layer = None, back_subs = 0):
         pass
@@ -111,7 +112,6 @@ class DeepPolySPULayer(nn.Module):
         pass
     def back_substitution(self, num_steps):
         pass
-
 
 
 
@@ -128,7 +128,6 @@ class DeepPolyOutputLayer(nn.Module):
         self.W2_plus = torch.clamp(self.weights1, min=0)
         self.W2_minus = torch.clamp(self.weights1, max=0)
 
-
     def forward(self, bounds):
         upper1 = torch.matmul(self.W1_plus, bounds[:,1]) + torch.matmul(self.W1_minus, bounds[:,0])
         lower1 = torch.matmul(self.W1_plus, bounds[:,0]) + torch.matmul(self.W1_minus, bounds[:,1])
@@ -136,7 +135,6 @@ class DeepPolyOutputLayer(nn.Module):
         if self.back_sub_steps > 0:
             self.back_sub(self.back_sub_steps)
         return self.bounds1
-
 
     def _back_sub(self, max_steps):
         Ml1, Mu1  = self.weights1, self.weights1
@@ -152,7 +150,6 @@ class DeepPolyOutputLayer(nn.Module):
             upper1 = torch.matmul(torch.clamp(Mu1, min=0), self.last.bounds[:, 1]) + torch.matmul(torch.clamp(Mu1, max=0), self.last.bounds[:, 0]) 
             return torch.stack([lower1, upper1], 1)
 
-
     def back_substitution(self, num_steps):
         new_bounds = self._back_sub(num_steps)
         indl = new_bounds[:,0] > self.bounds1[:,0]
@@ -160,7 +157,6 @@ class DeepPolyOutputLayer(nn.Module):
         self.bounds1[indl, 0] = new_bounds[indl,0]
         self.bounds1[indu, 1] = new_bounds[indu,1]
 
-        
     def _set_weights(self):
         self.weights1=torch.zeros((self.n_labels-1,self.n_labels))
         self.weights1[:,self.true_label]-=1
