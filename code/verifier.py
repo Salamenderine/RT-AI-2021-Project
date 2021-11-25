@@ -5,7 +5,7 @@ from networks import FullyConnected
 from networks import *
 from torch import nn
 import logging, sys
-
+# import pdb
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
@@ -53,6 +53,8 @@ class DeepPolyInputLayer(nn.Module):
         self.eps = eps
 
     def forward(self, input:torch.Tensor):
+        
+        # pdb.set_trace()
         logging.debug("Now in Input Fowrad")
         lower = torch.clamp(input - self.eps, 0., 1.)
         upper = torch.clamp(input + self.eps, 0., 1.)
@@ -349,7 +351,7 @@ class DeepPolyOutputLayer(nn.Module):
 
 def analyze(net, inputs, eps, true_label):
     net.eval()
-    d = DeepPoly(net, eps, inputs, true_label, back_subs=20)
+    d = DeepPoly(net, inputs, eps, true_label, back_subs=20)
     b1 = d.verify()
     # b1 upper bound represents y_false_upper - y_true_low, which should be <=0
     if sum(b1[1]>0)==0:
@@ -388,6 +390,7 @@ def main():
 
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
 
+    # pdb.set_trace()
     inputs = torch.FloatTensor(pixel_values).view(1, 1, INPUT_SIZE, INPUT_SIZE).to(DEVICE)
     outs = net(inputs)
     pred_label = outs.max(dim=1)[1].item()
