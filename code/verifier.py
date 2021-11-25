@@ -9,7 +9,7 @@ import logging, sys
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 class DeepPoly():
     def __init__(self, net, inputs, eps, true_label, back_subs=0):
