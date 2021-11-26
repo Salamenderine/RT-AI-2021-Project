@@ -257,6 +257,13 @@ class DeepPolySPULayer(nn.Module):
         self.bounds[1, idx4] = self.upper_slope[idx4] * (bounds[0, idx4] - bounds[1, idx4]) / 2 - torch.div(exp_mid, 1+exp_mid)
         self.bounds[0, idx4] = - torch.div(exp_u, 1 + exp_u)
 
+        '''These code are for testing, we are using more tighter upper/lower bound without changing the slope and intercept'''
+        self.bounds[0, idx1] = bounds[0, idx1]**2 - 0.5
+        self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        exp_l = torch.exp(bounds[0, idx4])
+        self.bounds[1, idx4] = - torch.div(exp_l, 1+ exp_l)
+
+
         logging.debug("Now in SPU forward")
         if self.back_subs > 0:
             self.back_substitution(self.back_subs)
