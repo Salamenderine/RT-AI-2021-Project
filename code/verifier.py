@@ -308,51 +308,51 @@ class DeepPolySPULayer(nn.Module):
 class DeepPolyOutputLayer(nn.Module):
     def __init__(self, true_label, prev_layer=None, back_subs=0):
         super(DeepPolyOutputLayer, self).__init__()
-        self.prev_layer = prev_layer
         self.true_label = true_label
+        self.prev_layer = prev_layer
         self.back_subs = back_subs
-        self.n_labels = self.prev_layer.weights.shape[0]
+        self.num_label = self.prev_layer.weights.shape[0]
 
-        self.weights1=torch.zeros((self.n_labels-1,self.n_labels))
+        self.weights1=torch.zeros((self.num_label-1,self.num_label))
         self.weights1[:,self.true_label]-=1
         self.weights1[:self.true_label, :self.true_label] += torch.eye(self.true_label)
-        self.weights1[self.true_label:, self.true_label + 1:] += torch.eye(self.n_labels - self.true_label - 1)
+        self.weights1[self.true_label:, self.true_label + 1:] += torch.eye(self.num_label - self.true_label - 1)
 
-        self.W1_plus = torch.clamp(self.weights1, min=0)
-        self.W1_minus = torch.clamp(self.weights1, max=0)
+        self.weights_postive = torch.clamp(self.weights1, min=0)
+        self.wrights_negative = torch.clamp(self.weights1, max=0)
         
 
     def forward(self, bounds):
         logging.debug("Now in Output forward")
-        upper1 = torch.matmul(self.W1_plus, bounds[1]) + torch.matmul(self.W1_minus, bounds[0])
-        lower1 = torch.matmul(self.W1_plus, bounds[0]) + torch.matmul(self.W1_minus, bounds[1])
-        self.bounds1 = torch.stack([lower1, upper1], 0)
+        upper = torch.matmul(self.weights_postive, bounds[1]) + torch.matmul(self.wrights_negative, bounds[0])
+        lower = torch.matmul(self.weights_postive, bounds[0]) + torch.matmul(self.wrights_negative, bounds[1])
+        self.bounds_new = torch.stack([lower, upper], 0)
         if self.back_subs > 0:
             self.back_substitution(self.back_subs)
-        return self.bounds1
+        return self.bounds_new
 
     def _back_sub(self, max_steps):
         logging.debug("Now in Output _back_sub")
-        Ml, Mu  = self.weights1, self.weights1
+        lower_slope, upper_slope  = self.weights1, self.weights1
 
         if max_steps > 0 and self.prev_layer.prev_layer is not None:
-            Mlnew = torch.matmul(Ml, self.prev_layer.weights) 
-            Munew = torch.matmul(Mu, self.prev_layer.weights) 
-            bl1new = torch.matmul(Ml, self.prev_layer.bias)
-            bu1new = torch.matmul(Mu, self.prev_layer.bias)
-            return self.prev_layer._back_sub(max_steps-1, params=(Mlnew, Munew, bl1new, bu1new))
+            new_lower_slope = torch.matmul(lower_slope, self.prev_layer.weights) 
+            new_upper_slope = torch.matmul(upper_slope, self.prev_layer.weights) 
+            new_lower_intercept = torch.matmul(lower_slope, self.prev_layer.bias)
+            new_upper_intercept = torch.matmul(upper_slope, self.prev_layer.bias)
+            return self.prev_layer._back_sub(max_steps-1, params=(new_lower_slope, new_upper_slope, new_lower_intercept, new_upper_intercept))
         else:
-            lower1 = torch.matmul(torch.clamp(Ml, min=0), self.prev_layer.bounds[0]) + torch.matmul(torch.clamp(Ml, max=0), self.prev_layer.bounds[1]) 
-            upper1 = torch.matmul(torch.clamp(Mu, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(Mu, max=0), self.prev_layer.bounds[0]) 
+            lower1 = torch.matmul(torch.clamp(lower_slope, min=0), self.prev_layer.bounds[0]) + torch.matmul(torch.clamp(lower_slope, max=0), self.prev_layer.bounds[1]) 
+            upper1 = torch.matmul(torch.clamp(upper_slope, min=0), self.prev_layer.bounds[1]) + torch.matmul(torch.clamp(upper_slope, max=0), self.prev_layer.bounds[0]) 
             return torch.stack([lower1, upper1], 1)
 
     def back_substitution(self, num_steps):
         logging.debug("Now in SPU back_subustitution")
         new_bounds = self._back_sub(num_steps)
-        indl = new_bounds[0] > self.bounds1[0]
-        indu = new_bounds[1] < self.bounds1[1]
-        self.bounds1[0, indl] = new_bounds[0,indl]
-        self.bounds1[1, indu] = new_bounds[1, indu]
+        indl = new_bounds[0] > self.bounds_new[0]
+        indu = new_bounds[1] < self.bounds_new[1]
+        self.bounds_new[0, indl] = new_bounds[0,indl]
+        self.bounds_new[1, indu] = new_bounds[1, indu]
 
         
 
