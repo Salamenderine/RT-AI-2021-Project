@@ -232,9 +232,9 @@ class DeepPolySPULayer(nn.Module):
         temp_idx = slope1 > slope2
         slope2[temp_idx] = slope1[temp_idx]
         self.upper_slope[idx2] = slope2
+        self.upper_intercept[idx2] = - slope2 * bounds[0, idx2] - torch.div(exp_l, 1 + exp_l)
 
         self.lower_slope[idx2] = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
-        self.upper_intercept[idx2] = - slope2 * bounds[0, idx2] - torch.div(exp_l, 1 + exp_l)
         self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
 
         self.bounds[0, idx2] = torch.div(-0.5 * bounds[1, idx2] + torch.div(bounds[1, idx2] * exp_l, 1 + exp_l), -bounds[0, idx2]) - 0.5
@@ -343,21 +343,34 @@ class DeepPolySPULayerBound2(DeepPolySPULayer):
         self.lower_intercept[idx1] = -0.25 * (bounds[1, idx1] + bounds[0,idx1])**2 - 0.5
 
         # all case 2 (upper greater than lower)
-        # import pdb
-        # pdb.set_trace()
-        self.bounds[0, idx2] = torch.minimum((bounds[0, idx2] + bounds[1, idx2]) * (3 * bounds[0, idx2] - bounds[1, idx2]) / 4 - 0.5, (bounds[1, idx2] + bounds[0, idx2]) * (3 * bounds[1, idx2] - bounds[0, idx2]) / 4 - 0.5)
         exp_l = torch.exp(bounds[0, idx2])
-        upper1 = (bounds[1, idx2])**2 - 0.5
-        upper2 = torch.div(-exp_l, 1 + exp_l)
+        slope1 = - torch.div( exp_l, (1 + exp_l)**2 )
+        slope2 = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div( exp_l, 1 + exp_l ), bounds[1, idx2] - bounds[0, idx2])
+        temp_idx = slope1 > slope2
+        slope2[temp_idx] = slope1[temp_idx]
+        self.upper_slope[idx2] = slope2
+        self.upper_intercept[idx2] = - slope2 * bounds[0, idx2] - torch.div(exp_l, 1 + exp_l)
+
+        upper1 = - torch.div(exp_l, 1 + exp_l)
+        upper2 = slope2 * (bounds[1, idx2] - bounds[0, idx2]) + upper1
         temp_idx = upper1 > upper2
         upper2[temp_idx] = upper1[temp_idx]
         self.bounds[1, idx2] = upper2
-        
+        self.bounds[0, idx2] = torch.minimum((bounds[0, idx2] + bounds[1, idx2]) * (3 * bounds[0, idx2] - bounds[1, idx2]) / 4 - 0.5, (bounds[1, idx2] + bounds[0, idx2]) * (3 * bounds[1, idx2] - bounds[0, idx2]) / 4 - 0.5)
+        # exp_l = torch.exp(bounds[0, idx2])
+        # upper1 = (bounds[1, idx2])**2 - 0.5
+        # upper2 = torch.div(-exp_l, 1 + exp_l)
+        # temp_idx = upper1 > upper2
+        # upper2[temp_idx] = upper1[temp_idx]
+        # self.bounds[1, idx2] = upper2
+
         self.lower_slope[idx2] = bounds[1, idx2] + bounds[0, idx2]
         self.lower_intercept[idx2] = - 0.25 * (bounds[1, idx2] + bounds[0, idx2])**2 - 0.5
 
-        self.upper_slope[idx2] = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div(exp_l, 1 + exp_l), bounds[1, idx2] - bounds[0, idx2])
-        self.upper_intercept[idx2] = - bounds[0, idx2] * self.upper_slope[idx2] - torch.div(exp_l, 1+ exp_l)
+        # Here should also use the upper slope and intercept as bound1 
+        # self.upper_slope[idx2] = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div(exp_l, 1 + exp_l), bounds[1, idx2] - bounds[0, idx2])
+        # self.upper_intercept[idx2] = - bounds[0, idx2] * self.upper_slope[idx2] - torch.div(exp_l, 1+ exp_l)
+        
 
         # All negative case
         mid = (bounds[1, idx4] + bounds[0, idx4]) / 2
@@ -388,7 +401,8 @@ class DeepPolySPULayerBound2(DeepPolySPULayer):
         logging.debug("Now in SPU forward")
         if self.back_subs > 0:
             self.back_substitution(self.back_subs)
-
+        # import pdb
+        # pdb.set_trace()
         return self.bounds
 
 
@@ -434,29 +448,18 @@ class DeepPolySPULayerBound3(DeepPolySPULayer):
         temp_idx = slope1 > slope2
         slope2[temp_idx] = slope1[temp_idx]
         self.upper_slope[idx2] = slope2
-        self.lower_slope[idx2] = torch.zeros_like(bounds[0, idx2])
         self.upper_intercept[idx2] = - slope2 * bounds[0, idx2] - torch.div(exp_l, 1 + exp_l)
-        self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
-        self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+
         upper1 = - torch.div(exp_l, 1 + exp_l)
         upper2 = slope2 * (bounds[1, idx2] - bounds[0, idx2]) + upper1
         temp_idx = upper1 > upper2
         upper2[temp_idx] = upper1[temp_idx]
         self.bounds[1, idx2] = upper2
 
-        # Cross boundary case 2 (upper greater than lower)
-        self.bounds[0, idx3] = -0.5 * torch.ones_like(bounds[0, idx3])
-        exp_l = torch.exp(bounds[0, idx3])
-        upper1 = (bounds[1, idx3])**2 - 0.5
-        upper2 = torch.div(-exp_l, 1 + exp_l)
-        temp_idx = upper1 > upper2
-        upper2[temp_idx] = upper1[temp_idx]
-        self.bounds[1, idx3] = upper2
-        
-        self.lower_slope[idx3] = torch.zeros_like(bounds[0, idx3])
-        self.lower_intercept[idx3] = -0.5 * torch.ones_like(bounds[0, idx3])
-        self.upper_slope[idx3] = torch.div(bounds[1, idx3]**2 - 0.5 + torch.div(exp_l, 1 + exp_l), bounds[1, idx3] - bounds[0, idx3])
-        self.upper_intercept[idx3] = - bounds[0, idx3] * self.upper_slope[idx3] - torch.div(exp_l, 1+ exp_l)
+        self.lower_slope[idx2] = torch.zeros_like(bounds[0, idx2])
+        self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+
 
         # All negative case
         mid = (bounds[1, idx4] + bounds[0, idx4]) / 2
@@ -555,9 +558,11 @@ def analyze(net, inputs, eps, true_label):
     b2 = d2.verify()
     d3 = DeepPoly(net, inputs, eps, true_label, 20, 3)
     b3 = d3.verify()
+    # import pdb
+    # pdb.set_trace()
     # b1 upper bound represents y_false_upper - y_true_low, which should be < 0
     if sum(b1[1]>=0)==0 or sum(b2[1]>=0)==0 or sum(b3[1]>=0)==0:
-    # if sum(b1[1]>=0)==0:
+    # if sum(b1[1]>=0)==0 or sum(b2[1]>=0)==0:
     # if sum(b2[1]>=0)==0:
         return True
     else:
