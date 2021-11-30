@@ -260,12 +260,12 @@ class DeepPolySPULayer(nn.Module):
         # import pdb
         # pdb.set_trace()
         self.bounds[0, idx1] = bounds[0, idx1]**2 - 0.5
-        self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        # self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
         exp_l = torch.exp(bounds[0, idx4])
         self.bounds[1, idx4] = - torch.div(exp_l, 1+ exp_l)
 
         # tighter lower bound
-        # self.bounds[0] = torch.clamp(self.bounds[0], min=-0.5)
+        self.bounds[0] = torch.clamp(self.bounds[0], min=-0.5)
 
         logging.debug("Now in SPU forward")
         if self.back_subs > 0:
@@ -375,13 +375,13 @@ class DeepPolySPULayerBound2(DeepPolySPULayer):
         # import pdb
         # pdb.set_trace()
         self.bounds[0, idx1] = bounds[0, idx1]**2 - 0.5
-        self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        # self.bounds[0, idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
         exp_l = torch.exp(bounds[0, idx4])
         self.bounds[1, idx4] = - torch.div(exp_l, 1+ exp_l)
 
 
         # tighter lower bound
-        # self.bounds[0] = torch.clamp(self.bounds[0], min=-0.5)
+        self.bounds[0] = torch.clamp(self.bounds[0], min=-0.5)
 
         logging.debug("Now in SPU forward")
         if self.back_subs > 0:
