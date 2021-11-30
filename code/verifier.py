@@ -363,9 +363,15 @@ class DeepPolySPULayerBound2(DeepPolySPULayer):
         # temp_idx = upper1 > upper2
         # upper2[temp_idx] = upper1[temp_idx]
         # self.bounds[1, idx2] = upper2
-
-        self.lower_slope[idx2] = bounds[1, idx2] + bounds[0, idx2]
-        self.lower_intercept[idx2] = - 0.25 * (bounds[1, idx2] + bounds[0, idx2])**2 - 0.5
+        lower1 = bounds[1, idx2] + bounds[0, idx2]
+        lower2 = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
+        temp_idx = lower1 > lower2
+        lower2[temp_idx] = lower1[temp_idx]
+        b1 = - 0.25 * (bounds[1, idx2] + bounds[0, idx2])**2 - 0.5
+        b2 = -0.5 * torch.ones_like(bounds[0, idx2])
+        b2[temp_idx] = b1[temp_idx]
+        self.lower_slope[idx2] = lower2
+        self.lower_intercept[idx2] = b2
 
         # Here should also use the upper slope and intercept as bound1 
         # self.upper_slope[idx2] = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div(exp_l, 1 + exp_l), bounds[1, idx2] - bounds[0, idx2])
