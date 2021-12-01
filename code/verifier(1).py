@@ -26,7 +26,7 @@ class DeepPoly():
         
         self.layers = [DeepPolyInputLayer(self.eps)]
         prev_layer = None
-        for layer in self.net.layers:
+        for idx, layer in enumerate(self.net.layers):
             if isinstance(layer, torch.nn.Linear):
                 prev_layer = DeepPolyAffineLayer(weights=layer._parameters['weight'].detach(), bias=layer._parameters['bias'].detach(), prev_layer=prev_layer, back_subs=self.back_subs)
                 self.layers.append(prev_layer)
@@ -37,7 +37,7 @@ class DeepPoly():
                 prev_layer = DeepPolyNormalizeLayer(prev_layer=prev_layer)
                 self.layers.append(prev_layer)
             elif isinstance(layer, SPU):
-                prev_layer = DeepPolySPULayer(prev_layer=prev_layer, back_subs=self.back_subs)
+                prev_layer = DeepPolySPULayer(self.net.layers[idx-1]._parameters['weight'].size()[0], prev_layer=prev_layer, back_subs=self.back_subs)
                 self.layers.append(prev_layer)
             else:
                 raise TypeError('Layer type unknown!')
@@ -61,41 +61,7 @@ class DeepPoly():
             current_bound = self.transformer(self.inputs)
             loss = torch.nn.functional.mse_loss(sum(current_bound[1] > 0), 0)
             loss.backward()
-
-# class DeepPoly1():
-#     def __init__(self, net, inputs, eps, true_label, back_subs=0):
-#         # assert eps > 0
-#         self.net = net
-#         self.inputs = inputs
-#         self.eps = eps
-#         self.true_label = true_label
-#         self.back_subs = back_subs
-        
-#         self.layers = [DeepPolyInputLayer(self.eps)]
-#         prev_layer = None
-#         for layer in self.net.layers:
-#             if isinstance(layer, torch.nn.Linear):
-#                 prev_layer = DeepPolyAffineLayer(weights=layer._parameters['weight'].detach(), bias=layer._parameters['bias'].detach(), prev_layer=prev_layer, back_subs=self.back_subs)
-#                 self.layers.append(prev_layer)
-#             elif isinstance(layer, torch.nn.Flatten):
-#                 prev_layer = DeepPolyFlattenLayer(prev_layer=prev_layer)
-#                 self.layers.append(prev_layer)
-#             elif isinstance(layer, Normalization):
-#                 prev_layer = DeepPolyNormalizeLayer(prev_layer=prev_layer)
-#                 self.layers.append(prev_layer)
-#             elif isinstance(layer, SPU):
-#                 prev_layer = DeepPolySPULayer1(prev_layer=prev_layer, back_subs=self.back_subs)
-#                 self.layers.append(prev_layer)
-#             else:
-#                 raise TypeError('Layer type unknown!')
-
-#         self.layers.append(DeepPolyOutputLayer(true_label=self.true_label, prev_layer=prev_layer, back_subs=self.back_subs))
-        
-#         self.transformer = nn.Sequential(*self.layers)
-
-#     def verify(self):
-#         return self.transformer(self.inputs) 
-
+            self.optimizer.step()
     
 class DeepPolyInputLayer(nn.Module):
     def __init__(self, eps):
@@ -227,13 +193,15 @@ class DeepPolyAffineLayer(nn.Module):
 
 
 class DeepPolySPULayer(nn.Module):
-    def __init__(self, prev_layer = None, back_subs = 0):
+    def __init__(self, bound_size, prev_layer = None, back_subs = 0):
         super(DeepPolySPULayer, self).__init__()
         self.prev_layer = prev_layer
         self.back_subs = back_subs
+        self.STEP = torch.nn.Parameter(torch.zeros(bound_size))
 
     def forward(self, bounds):
-        self.STEP = torch.nn.Parameter(torch.zeros_like(bounds[0]))
+        import pdb
+        pdb.set_trace()
         logging.debug("Now in SPU forward")
         # Index for all positive case
         idx1 = bounds[0] >= 0
