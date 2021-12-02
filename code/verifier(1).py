@@ -248,19 +248,28 @@ class DeepPolySPULayer(nn.Module):
         self.bounds[1, idx2] = upper2
 
         # Cross boundary case 2 (upper greater than lower)
-        self.bounds[0, idx3] = (bounds[0, idx3] + bounds[1, idx3]) * (3 * bounds[0, idx3] - bounds[1, idx3]) / 4 - 0.5
         exp_l = torch.exp(bounds[0, idx3])
         upper1 = (bounds[1, idx3])**2 - 0.5
         upper2 = torch.div(-exp_l, 1 + exp_l)
         temp_idx = upper1 > upper2
         upper2[temp_idx] = upper1[temp_idx]
         self.bounds[1, idx3] = upper2
-        
-        self.lower_slope[idx3] = bounds[1, idx3] + bounds[0, idx3]
-        self.lower_intercept[idx3] = - 0.25 * (bounds[1, idx3] + bounds[0, idx3])**2 - 0.5
-
         self.upper_slope[idx3] = torch.div(bounds[1, idx3]**2 - 0.5 + torch.div(exp_l, 1 + exp_l), bounds[1, idx3] - bounds[0, idx3])
         self.upper_intercept[idx3] = - bounds[0, idx3] * self.upper_slope[idx3] - torch.div(exp_l, 1+ exp_l)
+
+        # only apply STEP into lower line and bound
+        self.lower_slope[idx3] = bounds[1, idx3] + bounds[0, idx3] + 2*self.STEP[idx3]
+        self.lower_intercept[idx3] = self.lower_slope[idx3] * (-torch.div(bounds[1, idx3] + bounds[0, idx3], 2) - self.STEP[idx3]) + (torch.div(bounds[1, idx3] + bounds[0, idx3], 2) + self.STEP[idx3])**2 - 0.5
+        # for soundness, avoid the case that lower point is below the lower line
+        y_lower = torch.div(-exp_l, 1 + exp_l)
+        y_at_tagent_line = bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3]
+        below_idx = y_lower < y_at_tagent_line
+        # reset the lower slope and intercept
+        self.lower_slope[idx3][below_idx] = self.lower_slope[idx3][below_idx] - 2*self.STEP[idx3][below_idx]
+        self.lower_intercept[idx3][below_idx] = self.lower_slope[idx3][below_idx] * (-torch.div(bounds[1, idx3][below_idx] + bounds[0, idx3][below_idx], 2) - self.STEP[idx3][below_idx]) + (torch.div(bounds[1, idx3][below_idx] + bounds[0, idx3][below_idx], 2) + self.STEP[idx3][below_idx])**2 - 0.5
+        # for soundness, use the minimum here
+        self.bounds[0, idx3] = torch.minimum((bounds[0, idx3] + bounds[1, idx3]) * (3 * bounds[0, idx3] - bounds[1, idx3]) / 4 - 0.5, (bounds[1, idx3] + bounds[0, idx3]) * (3 * bounds[1, idx3] - bounds[0, idx3]) / 4 - 0.5)
+
 
         # All negative case
         mid = torch.minimum( (bounds[1, idx4] + bounds[0, idx4]) / 2 + self.STEP[idx4], torch.zeros_like(bounds[1,idx4]) )
@@ -388,6 +397,8 @@ class DeepPolyOutputLayer(nn.Module):
         
 
 def analyze(net, inputs, eps, true_label):
+    import time
+    start = time.perf_counter()
     net.eval()
     d = DeepPoly(net, inputs, eps, true_label, back_subs=20)
     # d2 = DeepPoly1(net, inputs, eps, true_label, back_subs=20)
@@ -395,8 +406,7 @@ def analyze(net, inputs, eps, true_label):
     # b1 upper bound represents y_false_upper - y_true_low, which should be <=0
     # opt = optim.Adam(verif_net.parameters(), lr=1)
     optimizer = torch.optim.Adam(d.transformer.parameters(), lr=1e-3)
-    num_iter = 500
-    for i in range(num_iter):
+    while(time.perf_counter() - start < 60):
         optimizer.zero_grad()
         # # need to create new DeepPoly each iter
         # x = DeepPoly(lb.shape[0], lb, ub)
@@ -412,14 +422,15 @@ def analyze(net, inputs, eps, true_label):
         #             print("\t", p)
         #     # if we ever verify, we know we are done (because we are sound)
         #     return True
-        if i == num_iter - 1:
-            return False
-
         # loss = torch.nn.functional.mse_loss(torch.tensor(sum(b1[1] > 0)), torch.tensor(0))
         loss = torch.log(b1[1]).max()
         loss.backward()
         optimizer.step()
+        for name, parms in d.transformer.named_parameters():
+            print('-->name:', name, '-->grad_requirs:',parms.requires_grad, \
+                ' -->grad_value:',parms.grad)
 
+    return False
     # if sum(b1[1]>0)==0:
     #     return True
     # else:
