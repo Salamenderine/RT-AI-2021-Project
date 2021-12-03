@@ -261,14 +261,18 @@ class DeepPolySPULayer(nn.Module):
         self.lower_slope[idx3] = bounds[1, idx3] + bounds[0, idx3] + 2*self.STEP[idx3]
         self.lower_intercept[idx3] = self.lower_slope[idx3] * (-torch.div(bounds[1, idx3] + bounds[0, idx3], 2) - self.STEP[idx3]) + (torch.div(bounds[1, idx3] + bounds[0, idx3], 2) + self.STEP[idx3])**2 - 0.5
         # for soundness, avoid the case that lower point is below the lower line
+        below_idx = torch.zeros_like(idx3, dtype=torch.bool)
         y_lower = torch.div(-exp_l, 1 + exp_l)
         y_at_tagent_line = bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3]
-        below_idx = y_lower < y_at_tagent_line
+        lessthan = y_lower < y_at_tagent_line
+        below_idx[idx3] = lessthan
         # reset the lower slope and intercept
-        self.lower_slope[idx3][below_idx] = self.lower_slope[idx3][below_idx] - 2*self.STEP[idx3][below_idx]
-        self.lower_intercept[idx3][below_idx] = self.lower_slope[idx3][below_idx] * (-torch.div(bounds[1, idx3][below_idx] + bounds[0, idx3][below_idx], 2) - self.STEP[idx3][below_idx]) + (torch.div(bounds[1, idx3][below_idx] + bounds[0, idx3][below_idx], 2) + self.STEP[idx3][below_idx])**2 - 0.5
+        if True in lessthan:
+            self.lower_slope[below_idx] = self.lower_slope[below_idx] - 2*self.STEP[below_idx]
+            self.lower_intercept[below_idx] = self.lower_slope[below_idx] * (-torch.div(bounds[1, below_idx] + bounds[0, below_idx], 2) - self.STEP[below_idx]) + (torch.div(bounds[1, below_idx] + bounds[0, below_idx], 2) + self.STEP[below_idx])**2 - 0.5
         # for soundness, use the minimum here
-        self.bounds[0, idx3] = torch.minimum((bounds[0, idx3] + bounds[1, idx3]) * (3 * bounds[0, idx3] - bounds[1, idx3]) / 4 - 0.5, (bounds[1, idx3] + bounds[0, idx3]) * (3 * bounds[1, idx3] - bounds[0, idx3]) / 4 - 0.5)
+        # self.bounds[0, idx3] = torch.minimum((bounds[0, idx3] + bounds[1, idx3]) * (3 * bounds[0, idx3] - bounds[1, idx3]) / 4 - 0.5, (bounds[1, idx3] + bounds[0, idx3]) * (3 * bounds[1, idx3] - bounds[0, idx3]) / 4 - 0.5)
+        self.bounds[0, idx3] = torch.minimum(bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3], bounds[1, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3])
 
 
         # All negative case
@@ -405,30 +409,29 @@ def analyze(net, inputs, eps, true_label):
     # b2 = d2.verify()
     # b1 upper bound represents y_false_upper - y_true_low, which should be <=0
     # opt = optim.Adam(verif_net.parameters(), lr=1)
-    optimizer = torch.optim.Adam(d.transformer.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(d.transformer.parameters(), lr=5e-3)
     while(time.perf_counter() - start < 60):
         optimizer.zero_grad()
         # # need to create new DeepPoly each iter
         # x = DeepPoly(lb.shape[0], lb, ub)
         # verify_result, xlb, xub = verif_net(x)
         b1 = d.verify()
-        if sum(b1[1]>0)==0:
+        # print(b1[1])
+        if sum(b1[1]>=0)==0:
             return True
-        # if (verify_result > 0).all():
-        #     if VERBOSE:
-        #         print("Success after the ", i, "th iteration !")
-        #         print("lambdas that worked for verification:")
-        #         for p in verif_net.parameters():
-        #             print("\t", p)
-        #     # if we ever verify, we know we are done (because we are sound)
-        #     return True
-        # loss = torch.nn.functional.mse_loss(torch.tensor(sum(b1[1] > 0)), torch.tensor(0))
-        loss = torch.log(b1[1]).max()
+
+        loss_func = nn.MSELoss()
+        loss_idx = b1[1] >= 0
+        loss = loss_func(b1[1][loss_idx], torch.zeros_like(b1[1][loss_idx]))
+        # loss = torch.log(b1[1]).max()
+        # loss = b1[1].max()
         loss.backward()
         optimizer.step()
-        for name, parms in d.transformer.named_parameters():
-            print('-->name:', name, '-->grad_requirs:',parms.requires_grad, \
-                ' -->grad_value:',parms.grad)
+        # for name, parms in d.transformer.named_parameters():
+        #     # print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad),' -->grad_value:',parms.grad)
+        #     print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad))
+
+        # return False
 
     return False
     # if sum(b1[1]>0)==0:
