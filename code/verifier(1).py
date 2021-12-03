@@ -1,4 +1,5 @@
 import argparse
+from pdb import set_trace
 import torch
 from torch.functional import Tensor
 # from code.networks import Normalization
@@ -206,9 +207,9 @@ class DeepPolySPULayer(nn.Module):
         # Index for all positive case
         idx1 = bounds[0] >= 0
         # Index for cross boundary case
-        idx2 = (bounds[1]>=0) * (bounds[0]<0)
+        idx2 = (bounds[1]>=0) * (bounds[0]<0) * (bounds[1] < - bounds[0])
         # Index for cross boundary with upperbound greater than lower bound
-        idx3 = (bounds[1] >= - bounds[0]) * idx2
+        idx3 = (bounds[1]>=0) * (bounds[0]<0) * (bounds[1] >= - bounds[0])
         # Index for all negative case
         idx4 = bounds[1] < 0
 
@@ -221,31 +222,55 @@ class DeepPolySPULayer(nn.Module):
         self.bounds = torch.zeros_like(bounds)
 
         # All positive case
-        self.bounds[1, idx1] = bounds[1, idx1]**2 - 0.5
-        self.bounds[0, idx1] = (bounds[0, idx1] + bounds[1, idx1]) * (3 * bounds[0, idx1] - bounds[1, idx1]) / 4 - 0.5
         self.upper_slope[idx1] = bounds[1, idx1] + bounds[0, idx1]
-        self.lower_slope[idx1] = bounds[1, idx1] + bounds[0, idx1] + 2 * self.STEP[idx1]
-        self.upper_intercept[idx1] = -(bounds[0, idx1] + bounds[1, idx1])**2/4 -(bounds[0, idx1] + bounds[1, idx1]) * self.STEP[idx1] - self.STEP[idx1]**2 -0.5
-        self.lower_intercept[idx1] = -0.25 * (bounds[1, idx1] + bounds[0,idx1])**2 - 0.5
+        self.upper_intercept[idx1] = -bounds[0, idx1] * bounds[1, idx1] - 0.5
+        self.bounds[1, idx1] = bounds[1, idx1]**2 - 0.5
+        # self.upper_intercept[idx1] = -(bounds[0, idx1] + bounds[1, idx1])**2/4 -(bounds[0, idx1] + bounds[1, idx1]) * self.STEP[idx1] - self.STEP[idx1]**2 -0.5
+
+        self.lower_slope[idx1] = bounds[1, idx1] + bounds[0, idx1] + 2*self.STEP[idx1]
+        self.lower_intercept[idx1] = self.lower_slope[idx1] * (-torch.div(bounds[1, idx1] + bounds[0, idx1], 2) - self.STEP[idx1]) + (torch.div(bounds[1, idx1] + bounds[0, idx1], 2) + self.STEP[idx1])**2 - 0.5
+        self.bounds[0, idx1] = torch.minimum(bounds[0, idx1] * self.lower_slope[idx1] + self.lower_intercept[idx1], bounds[1, idx1] * self.lower_slope[idx1] + self.lower_intercept[idx1])
 
         # Cross boundary case (upper strictly smaller than lower)
         exp_l = torch.exp(bounds[0, idx2])
-        slope1 = - torch.div( exp_l, (1 + exp_l)**2 )
-        slope2 = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div( exp_l, 1 + exp_l ), bounds[1, idx2] - bounds[0, idx2])
+        # lower case no need change
+        self.lower_slope[idx2] = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
+        self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        self.bounds[0, idx2] = torch.div(-0.5 * bounds[1, idx2] + torch.div(bounds[1, idx2] * exp_l, 1 + exp_l), -bounds[0, idx2]) - 0.5
+
+        # only apply STEP to upper case (tagent case)
+        slope1 = - torch.div( exp_l, (1 + exp_l)**2 ) # tagent
+        slope2 = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div( exp_l, 1 + exp_l ), bounds[1, idx2] - bounds[0, idx2]) # secant
         temp_idx = slope1 > slope2
         slope2[temp_idx] = slope1[temp_idx]
         self.upper_slope[idx2] = slope2
-
-        self.lower_slope[idx2] = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
         self.upper_intercept[idx2] = - slope2 * bounds[0, idx2] - torch.div(exp_l, 1 + exp_l)
-        self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
 
-        self.bounds[0, idx2] = torch.div(-0.5 * bounds[1, idx2] + torch.div(bounds[1, idx2] * exp_l, 1 + exp_l), -bounds[0, idx2]) - 0.5
+        step_idx2 = self.STEP[idx2]
+        exp_l_step = torch.exp(bounds[0, idx2][temp_idx]+ step_idx2[temp_idx])
+        step_slope = - torch.div( exp_l_step, (1 + exp_l_step)**2 )
+        step_intercept = step_slope * (-bounds[0, idx2][temp_idx] - step_idx2[temp_idx]) - torch.div(exp_l_step, 1 + exp_l_step)
+        # check soundness of the step upper line
+        y_upper = bounds[1, idx2][temp_idx] ** 2 - 0.5
+        y_at_step_ul = bounds[1, idx2][temp_idx] * step_slope + step_intercept
+        # idx2 size indicate the step update for slope1
+        step_upd = temp_idx.clone()
+        sound_up = y_upper <= y_at_step_ul
+        step_upd[temp_idx] =  sound_up
+        ups_idx2 = self.upper_slope[idx2]
+        ups_idx2[step_upd] = step_slope[sound_up]
+        self.upper_slope[idx2] = ups_idx2
+        upi_idx2 = self.upper_intercept[idx2]
+        upi_idx2[step_upd] = step_intercept[sound_up]
+        self.upper_intercept[idx2] = upi_idx2
+
+        
         upper1 = - torch.div(exp_l, 1 + exp_l)
-        upper2 = slope2 * (bounds[1, idx2] - bounds[0, idx2]) + upper1
-        temp_idx = upper1 > upper2
-        upper2[temp_idx] = upper1[temp_idx]
-        self.bounds[1, idx2] = upper2
+        upper2 = self.upper_slope[idx2] * bounds[1, idx2] + self.upper_intercept[idx2]
+        self.bounds[1, idx2] = torch.maximum(upper1, upper2)
+
+        
+        
 
         # Cross boundary case 2 (upper greater than lower)
         exp_l = torch.exp(bounds[0, idx3])
@@ -268,8 +293,16 @@ class DeepPolySPULayer(nn.Module):
         below_idx[idx3] = lessthan
         # reset the lower slope and intercept
         if True in lessthan:
+            # import pdb
+            # pdb.set_trace()
             self.lower_slope[below_idx] = self.lower_slope[below_idx] - 2*self.STEP[below_idx]
-            self.lower_intercept[below_idx] = self.lower_slope[below_idx] * (-torch.div(bounds[1, below_idx] + bounds[0, below_idx], 2) - self.STEP[below_idx]) + (torch.div(bounds[1, below_idx] + bounds[0, below_idx], 2) + self.STEP[below_idx])**2 - 0.5
+
+            # self.lower_slope[below_idx] = 0
+            self.lower_intercept[below_idx] = self.lower_slope[below_idx] * -torch.div(self.lower_slope[below_idx], 2) + torch.div(self.lower_slope[below_idx], 2)**2 - 0.5
+
+            y_at_tagent_line = bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3]
+            lessthan = y_lower < y_at_tagent_line
+            assert(not (True in lessthan))
         # for soundness, use the minimum here
         # self.bounds[0, idx3] = torch.minimum((bounds[0, idx3] + bounds[1, idx3]) * (3 * bounds[0, idx3] - bounds[1, idx3]) / 4 - 0.5, (bounds[1, idx3] + bounds[0, idx3]) * (3 * bounds[1, idx3] - bounds[0, idx3]) / 4 - 0.5)
         self.bounds[0, idx3] = torch.minimum(bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3], bounds[1, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3])
@@ -404,20 +437,23 @@ def analyze(net, inputs, eps, true_label):
     import time
     start = time.perf_counter()
     net.eval()
-    d = DeepPoly(net, inputs, eps, true_label, back_subs=20)
+    deep = DeepPoly(net, inputs, eps, true_label, back_subs=20)
     # d2 = DeepPoly1(net, inputs, eps, true_label, back_subs=20)
     # b2 = d2.verify()
     # b1 upper bound represents y_false_upper - y_true_low, which should be <=0
     # opt = optim.Adam(verif_net.parameters(), lr=1)
-    optimizer = torch.optim.Adam(d.transformer.parameters(), lr=5e-3)
+    optimizer = torch.optim.Adam(deep.transformer.parameters(), lr=2e-1)
     while(time.perf_counter() - start < 60):
+    # while(True):
         optimizer.zero_grad()
         # # need to create new DeepPoly each iter
         # x = DeepPoly(lb.shape[0], lb, ub)
         # verify_result, xlb, xub = verif_net(x)
-        b1 = d.verify()
+        b1 = deep.verify()
         # print(b1[1])
         if sum(b1[1]>=0)==0:
+            # import pdb
+            # pdb.set_trace()
             return True
 
         loss_func = nn.MSELoss()
@@ -427,9 +463,11 @@ def analyze(net, inputs, eps, true_label):
         # loss = b1[1].max()
         loss.backward()
         optimizer.step()
-        # for name, parms in d.transformer.named_parameters():
+        # for name, parms in deep.transformer.named_parameters():
         #     # print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad),' -->grad_value:',parms.grad)
         #     print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad))
+        # print(b1[1])
+        # print('loss:', loss)
 
         # return False
 
