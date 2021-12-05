@@ -198,7 +198,7 @@ class DeepPolySPULayer(nn.Module):
         self.prev_layer = prev_layer
         self.back_subs = back_subs
         self.STEP = torch.nn.Parameter(torch.zeros(bound_size))
-        # self.STEP_NEG = torch.nn.Parameter(torch.zeros(bound_size))
+        self.STEP_C2Low = torch.nn.Parameter(torch.zeros(bound_size))
 
     def forward(self, bounds):
         # import pdb
@@ -232,13 +232,33 @@ class DeepPolySPULayer(nn.Module):
         self.bounds[0, idx1] = torch.minimum(bounds[0, idx1] * self.lower_slope[idx1] + self.lower_intercept[idx1], bounds[1, idx1] * self.lower_slope[idx1] + self.lower_intercept[idx1])
 
         # Cross boundary case (upper strictly smaller than lower)
-        exp_l = torch.exp(bounds[0, idx2])
-        # lower case no need change
-        self.lower_slope[idx2] = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
-        self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
-        self.bounds[0, idx2] = torch.div(-0.5 * bounds[1, idx2] + torch.div(bounds[1, idx2] * exp_l, 1 + exp_l), -bounds[0, idx2]) - 0.5
+        # exp_l = torch.exp(bounds[0, idx2])
+        # # lower case no need change
+        # self.lower_slope[idx2] = torch.div(-0.5 + torch.div(exp_l, 1+exp_l), -bounds[0, idx2]) 
+        # self.lower_intercept[idx2] = -0.5 * torch.ones_like(bounds[0, idx2])
+        # self.bounds[0, idx2] = torch.div(-0.5 * bounds[1, idx2] + torch.div(bounds[1, idx2] * exp_l, 1 + exp_l), -bounds[0, idx2]) - 0.5
+        # lower case can also move the tagent point to the right part
+        secant_idx = torch.zeros_like(idx2, dtype=bool)
+        secant_idx[idx2] = self.STEP_C2Low[idx2] <= 0
+        exp_l_secant = torch.exp(bounds[0, secant_idx])
+        tagent_idx = torch.zeros_like(idx2, dtype=bool)
+        tagent_idx[idx2] = self.STEP_C2Low[idx2] > 0
+        if True in tagent_idx:
+            print("in tagent_idx")
+        # import pdb
+        # pdb.set_trace()
+        # no change
+        self.lower_slope[secant_idx] = torch.div(-0.5 + torch.div(exp_l_secant, 1+exp_l_secant), -bounds[0, secant_idx]) 
+        self.lower_intercept[secant_idx] = -0.5 * torch.ones_like(bounds[0, secant_idx])
+        self.bounds[0, secant_idx] = torch.div(-0.5 * bounds[1, secant_idx] + torch.div(bounds[1, secant_idx] * exp_l_secant, 1 + exp_l_secant), -bounds[0, secant_idx]) - 0.5
+        # change to the tagent line
+        self.lower_slope[tagent_idx] = 2*self.STEP_C2Low[tagent_idx]
+        self.lower_intercept[tagent_idx] = -self.STEP_C2Low[tagent_idx]**2 - 0.5
+        self.bounds[0, tagent_idx] = torch.minimum(bounds[0, tagent_idx] * self.lower_slope[tagent_idx] + self.lower_intercept[tagent_idx], bounds[1, tagent_idx] * self.lower_slope[tagent_idx] + self.lower_intercept[tagent_idx])
 
-        # only apply STEP to upper case (tagent case)
+
+        # apply STEP to upper case (tagent case)
+        exp_l = torch.exp(bounds[0, idx2])
         slope1 = - torch.div( exp_l, (1 + exp_l)**2 ) # tagent
         slope2 = torch.div(bounds[1, idx2]**2 - 0.5 + torch.div( exp_l, 1 + exp_l ), bounds[1, idx2] - bounds[0, idx2]) # secant
         temp_idx = slope1 > slope2
@@ -293,13 +313,16 @@ class DeepPolySPULayer(nn.Module):
         below_idx[idx3] = lessthan
         # reset the lower slope and intercept
         if True in lessthan:
-            # import pdb
-            # pdb.set_trace()
-            self.lower_slope[below_idx] = self.lower_slope[below_idx] - 2*self.STEP[below_idx]
-
+            below = self.STEP[below_idx].clone()
+            below.zero_()
+            
+            # self.lower_slope[below_idx] = self.lower_slope[below_idx] - 2*self.STEP[below_idx]
+            self.lower_slope[below_idx] = bounds[1, below_idx] + bounds[0, below_idx] + 2*below
             # self.lower_slope[below_idx] = 0
-            self.lower_intercept[below_idx] = self.lower_slope[below_idx] * -torch.div(self.lower_slope[below_idx], 2) + torch.div(self.lower_slope[below_idx], 2)**2 - 0.5
-
+            # self.lower_intercept[below_idx] = self.lower_slope[below_idx] * -torch.div(self.lower_slope[below_idx], 2) + torch.div(self.lower_slope[below_idx], 2)**2 - 0.5
+            self.lower_intercept[below_idx] = -torch.div(self.lower_slope[below_idx]**2, 4) - 0.5
+            # import pdb 
+            # pdb.set_trace()
             y_at_tagent_line = bounds[0, idx3] * self.lower_slope[idx3] + self.lower_intercept[idx3]
             lessthan = y_lower < y_at_tagent_line
             assert(not (True in lessthan))
@@ -310,6 +333,9 @@ class DeepPolySPULayer(nn.Module):
 
         # All negative case
         mid = torch.minimum( (bounds[1, idx4] + bounds[0, idx4]) / 2 + self.STEP[idx4], torch.zeros_like(bounds[1,idx4]) )
+        # if False in (bounds[1, idx4] + bounds[0, idx4]) / 2 + self.STEP[idx4] < torch.zeros_like(bounds[1,idx4]):
+        #     import pdb
+        #     pdb.set_trace()
         exp_mid = torch.exp(mid)
 
         self.upper_slope[idx4] = torch.div(-exp_mid, (1 + exp_mid)**2)
@@ -455,19 +481,20 @@ def analyze(net, inputs, eps, true_label):
             # import pdb
             # pdb.set_trace()
             return True
-
+        # import pdb 
+        # pdb.set_trace()
         loss_func = nn.MSELoss()
         loss_idx = b1[1] >= 0
         loss = loss_func(b1[1][loss_idx], torch.zeros_like(b1[1][loss_idx]))
-        # loss = torch.log(b1[1]).max()
+        # loss = torch.log(b1[1][loss_idx]).max()
         # loss = b1[1].max()
         loss.backward()
         optimizer.step()
-        # for name, parms in deep.transformer.named_parameters():
-        #     # print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad),' -->grad_value:',parms.grad)
-        #     print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad))
-        # print(b1[1])
-        # print('loss:', loss)
+        for name, parms in deep.transformer.named_parameters():
+            # print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad),' -->grad_value:',parms.grad)
+            print('-->name:', name, '-->grad_minin2:',torch.mean(parms.grad))
+        print(b1[1])
+        print('loss:', loss)
 
         # return False
 
